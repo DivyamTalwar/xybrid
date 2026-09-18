@@ -47,6 +47,25 @@ void main() {
         destinationPath: destination,
       );
 
+  group('signatureVerifies', () {
+    test('accepts a valid signature and rejects a wrong one', () {
+      expect(signatureVerifies(keys.publicKey, payload, signature), isTrue);
+      expect(signatureVerifies(generateKey().publicKey, payload, signature),
+          isFalse);
+    });
+
+    test('answers false, never throws, for malformed signatures', () {
+      for (final malformed in [
+        Uint8List(0),
+        Uint8List(3),
+        Uint8List(64),
+        Uint8List(200),
+      ]) {
+        expect(signatureVerifies(keys.publicKey, payload, malformed), isFalse);
+      }
+    });
+  });
+
   group('fromEnvironment', () {
     test('defaults to ~/.xybrid/cache/precompiled', () {
       final resolved = SharedArtifactCache.fromEnvironment(
@@ -146,6 +165,40 @@ void main() {
           .writeAsBytesSync([1, 2, 3]);
 
       expect(restorePayload(), isFalse);
+    });
+
+    test('decodes verified bytes on the way out', () {
+      storePayload();
+
+      final restored = cache.restore(
+        crateHash: hash,
+        fileName: fileName,
+        signatureFileName: signatureFileName,
+        publicKey: keys.publicKey,
+        destinationPath: destination,
+        decode: (bytes) => bytes.reversed.toList(),
+      );
+
+      expect(restored, isTrue);
+      expect(File(destination).readAsBytesSync(), payload.reversed.toList());
+    });
+
+    test('deletes a verified entry that cannot be decoded', () {
+      storePayload();
+
+      final restored = cache.restore(
+        crateHash: hash,
+        fileName: fileName,
+        signatureFileName: signatureFileName,
+        publicKey: keys.publicKey,
+        destinationPath: destination,
+        decode: (_) => throw const FormatException('not gzip'),
+      );
+
+      expect(restored, isFalse);
+      expect(File(destination).existsSync(), isFalse);
+      expect(
+          File(path.join(cache.rootDir, hash, fileName)).existsSync(), isFalse);
     });
 
     test('misses when the signature file is absent', () {

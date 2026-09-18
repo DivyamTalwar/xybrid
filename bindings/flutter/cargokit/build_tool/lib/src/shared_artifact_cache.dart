@@ -44,6 +44,20 @@ void writeFileAtomically(String finalPath, List<int> bytes) {
   }
 }
 
+/// Whether [signature] is a valid ed25519 signature of [bytes] under [key].
+///
+/// Never throws. `ed25519_edwards` answers `false` for a signature of the
+/// wrong length today, but "a bad signature means try the next source" is a
+/// property callers rely on to keep a build going, so it must not hinge on how
+/// one library version treats malformed input.
+bool signatureVerifies(PublicKey key, Uint8List bytes, Uint8List signature) {
+  try {
+    return verify(key, bytes, signature);
+  } catch (_) {
+    return false;
+  }
+}
+
 class SharedArtifactCache {
   SharedArtifactCache(this.rootDir);
 
@@ -101,12 +115,17 @@ class SharedArtifactCache {
   ///
   /// Returns `false` on a miss. An entry that fails verification is deleted so
   /// the caller's fallback download replaces it.
+  ///
+  /// [decode] turns the verified bytes into what belongs at [destinationPath]
+  /// — decompression, for an entry stored in its compressed form. It only ever
+  /// runs on bytes whose signature has been checked.
   bool restore({
     required String crateHash,
     required String fileName,
     required String signatureFileName,
     required PublicKey publicKey,
     required String destinationPath,
+    List<int> Function(Uint8List verifiedBytes)? decode,
   }) {
     final entry = File(path.join(rootDir, crateHash, fileName));
     final signature = File(path.join(rootDir, crateHash, signatureFileName));
@@ -115,16 +134,23 @@ class SharedArtifactCache {
         return false;
       }
       final bytes = entry.readAsBytesSync();
-      if (!_verifies(publicKey, bytes, signature.readAsBytesSync())) {
+      if (!signatureVerifies(publicKey, bytes, signature.readAsBytesSync())) {
         _log.warning('Shared cache entry ${entry.path} failed signature '
             'verification; deleting it and downloading a fresh copy.');
         _deleteQuietly(entry);
         _deleteQuietly(signature);
         return false;
       }
-      writeFileAtomically(destinationPath, bytes);
+      writeFileAtomically(
+          destinationPath, decode == null ? bytes : decode(bytes));
       _markUsed(crateHash);
       return true;
+    } on FormatException catch (e) {
+      _log.warning('Shared cache entry ${entry.path} could not be decoded '
+          '($e); deleting it and downloading a fresh copy.');
+      _deleteQuietly(entry);
+      _deleteQuietly(signature);
+      return false;
     } on FileSystemException catch (e) {
       _log.fine('Shared cache unavailable at $rootDir: $e');
       return false;
@@ -195,15 +221,6 @@ class SharedArtifactCache {
       marker.setLastModifiedSync(DateTime.now());
     } on FileSystemException catch (e) {
       _log.fine('Could not update ${marker.path}: $e');
-    }
-  }
-
-  static bool _verifies(PublicKey key, Uint8List bytes, Uint8List signature) {
-    try {
-      return verify(key, bytes, signature);
-    } catch (_) {
-      // A malformed signature file (wrong length) makes `verify` throw.
-      return false;
     }
   }
 
