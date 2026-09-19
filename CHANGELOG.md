@@ -52,6 +52,43 @@ the same time, and a policy bundle decides which leg serves each request.
 
 ### Changed
 
+- **Apple: smaller `XybridFFI.xcframework`.** The Swift package's binary target is now
+  built with fat LTO (`--config=rust-lto`, shared with the Flutter precompile lane), so
+  each slice carries only the Rust code reachable from the exported FFI functions.
+  Measured: release zip 99.9 MB -> 63.6 MB; device slice 176 MB -> 117 MB, simulator
+  slice 171 MB -> 111 MB. All 91 functions declared in `xybrid-bolt.h` remain exported.
+  PR CI builds the XCFramework with the same config, so the Swift wrapper is compiled
+  and unit-tested against exactly what ships.
+- **Flutter: precompiled binaries are downloaded gzip-compressed.** The release lane
+  publishes every native library as-is and as `<asset>.gz`, each with its own ed25519
+  signature; cargokit prefers the compressed form, verifies it *before* decompressing,
+  and falls back to the uncompressed asset if the compressed one is missing (older
+  releases) or fails verification. Measured: iOS static library 119.2 MB -> 33.6 MB,
+  Android arm64 26.9 MB -> 9.5 MB; verify + unpack costs 0.6 s. The shared cache stores
+  the compressed form, so it shrinks by the same factor. `verify-binaries` also checks
+  that each compressed asset decodes to its uncompressed twin. A publisher re-run over a
+  partial release derives the missing assets from the already-published, signature-
+  verified binary instead of this run's rebuild, deletes unusable orphans (a binary
+  without its signature), and never signs bytes it cannot verify.
+- **Flutter: precompiled binaries are cached per machine, not per app.** cargokit
+  keeps verified downloads in `~/.xybrid/cache/precompiled/<crate-hash>/`, so
+  `flutter clean` and new projects copy the native library locally instead of
+  downloading it again. Each reuse re-verifies the ed25519 signature against the
+  package's pinned key; a corrupted or swapped entry is deleted and re-downloaded.
+  Entries unused for 90 days are pruned. `XYBRID_PRECOMPILED_CACHE_DIR` relocates
+  the cache (e.g. a CI-persisted path) or, set empty, disables it. Downloads into
+  the app's build directory are now written atomically.
+- **Flutter: precompiled-binary downloads are visible in the build log.**
+  cargokit now logs at INFO which native library it downloads, its size, and
+  the source URL, then progress every 10 s and a size/time/throughput summary;
+  each target also reports whether its binary was downloaded or reused from
+  cache. Previously all of this was FINE-level, so a first build that fetched a
+  ~180 MB static library was silent for minutes and read as a Rust compile.
+- **Smaller Flutter precompiled natives.** The `release/v*` precompile lane now
+  builds the Flutter staticlib/cdylib with fat LTO (`--config=flutter-precompile`).
+  Measured on the darwin staticlib: macOS 175 MB -> 112 MB, iOS 181 MB -> 119 MB;
+  the Rust objects shrink 79 MB -> 25 MB, the remainder is the bundled ONNX Runtime.
+  Cuts the first-build download and `-force_load` link for pub.dev consumers.
 - **Policy is a dispatch invariant.** Every stage decision evaluates the
   policy once against the actual input and one device snapshot; a denial (or
   a required transform) restricts the target to the device ahead of explicit
@@ -85,6 +122,14 @@ the same time, and a policy bundle decides which leg serves each request.
 
 ### Fixed
 
+- **Flutter iOS: builds from pub.dev no longer download an unused ONNX Runtime, and no
+  longer need `xz`.** The precompiled library already contains ONNX Runtime and nothing in
+  the podspec links a separate copy, yet every iOS build fetched a ~17 MB xcframework
+  (plus a ~9 MB simulator slice, 154 MB on disk) into `~/.xybrid/cache/ort-ios/`. The
+  simulator path also aborted with "xz is required" on any Mac without Homebrew `xz`,
+  which macOS does not ship. `build_pod.sh` now resolves ONNX Runtime only where a source
+  build is possible (the monorepo), decided by `source_build_possible.sh`, the shell twin
+  of cargokit's existing rule.
 - `Orchestrator::load_policies` (and therefore `xybrid run --policy`) wrote
   into an engine nothing consulted, so policies never affected routing.
 - The CLI mapped any provider other than openai/anthropic/google to OpenAI, so
