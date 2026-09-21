@@ -133,6 +133,21 @@ extension Xybrid {
 | `model()` | ✅ | ✅ | ✅ | ✅ |
 | `pipeline()` | ✅ | — | — | — |
 | `isModelCached()` | ✅ | — | — | — |
+| `releaseMemory()` | ✅ | ✅ | ✅ | ✅ |
+| `setAutoRelease()` | ✅ | ✅ | ✅ | ✅ |
+| `isAutoReleaseEnabled` | ✅ | ✅ | ✅ | ✅ |
+| `setSpeculativeCloud()` | ✅ | ✅ | ✅ | ✅ |
+| `isSpeculativeCloudEnabled` | ✅ | ✅ | ✅ | ✅ |
+| `hasApiKey` | — | ✅ | ✅ | ✅ |
+| `setProviderApiKey()` | — | ✅ | ✅ | ✅ |
+| `jsonSchemaToGbnf()` | ✅ | ✅ | ✅ | ✅ |
+
+`jsonSchemaToGbnf()` is a top-level function in Dart, Kotlin and Swift. C# has
+no top-level functions, so Unity exposes it as `XybridClient.JsonSchemaToGbnf`.
+
+Unity's `Initialize()` declares `gatewayUrl` **last**, after `ingestUrl`, so its
+pre-existing positional call sites keep compiling; the other bindings order it
+before `ingestUrl`.
 
 ---
 
@@ -336,15 +351,17 @@ var result = model.Run(Envelope.Text("Hello!"));
 | `fromHuggingfaceWithRevision()` | — | ✅ | ✅ | ✅ |
 | `load()` | ✅ | ✅ | ✅ | ✅ |
 | `loadWithProgress()` | ✅ | — | — | — |
-| `fromRegistrySpeculative()` | ✅ | ✅ | ✅ | — |
-| `willSpeculate` | ✅ | ✅ | ✅ | — |
+| `fromRegistrySpeculative()` | ✅ | ✅ | ✅ | ✅ |
+| `willSpeculate` | ✅ | ✅ | ✅ | ✅ |
 
 `fromRegistrySpeculative()` answers from the cloud gateway while the registry
 weights download in the background, then switches to on-device by itself. It
 needs an API key and an uncached model — otherwise it behaves exactly like
 `fromRegistry()`, which `willSpeculate` reports up front. LLM/chat models only.
-Unity has no loader facade; it calls the generated
-`XybridModel.FromRegistrySpeculative(id)` constructor directly.
+
+It sets the per-load override itself, so it does **not** depend on
+`setSpeculativeCloud()` — that toggle is the default for loads which do not opt
+in per-load.
 
 ---
 
@@ -1220,6 +1237,19 @@ GenerationConfigs.greedy()    // temperature=0, topP=1, topK=0
 GenerationConfigs.creative()  // temperature=0.9, topP=0.95, topK=50
 ```
 
+#### Structured output (`grammar`)
+
+`grammar` constrains decoding to a GBNF grammar. Build one from a JSON Schema
+with `jsonSchemaToGbnf()`, or pass raw GBNF. llama.cpp-only — other backends
+ignore it.
+
+| Binding | Surface |
+|---------|---------|
+| Dart | `GenerationConfig.grammar` |
+| Kotlin | `XybridGenerationConfig.grammar` |
+| Swift | `XybridGenerationConfig.make(grammar:)` |
+| C# (Unity) | `GenerationConfig.SetGrammar()` |
+
 #### Usage
 
 ```dart
@@ -1269,7 +1299,7 @@ let result = model.run_streaming_with_options(&envelope, &options, |token| {
 layers and platform routing can restart on cloud where supported; local Rust
 streaming abort is cooperative and checked before every emitted token.
 
-**User cancellation (Dart binding surface — implemented, issue 10).** A caller
+**User cancellation (all bindings).** A caller
 can abort an in-flight local streaming run via a `CancellationToken` cancel
 handle. In Rust the token is paired with `RunOptions`
 (`with_cancellation_token`); in Dart the caller constructs a
@@ -1294,6 +1324,47 @@ final sub = stream.listen((token) { /* ... */ });
 // Later, to stop Rust generation (not just unsubscribe):
 cancel.cancel();
 await sub.cancel();
+```
+
+**The bolt bindings (Kotlin, Swift, C#).** The token reaches them as a
+`XybridCancellationToken` handle with `cancel()` and `isCancelled()`, and it is
+a **required** argument on every generated run entry point — BoltFFI cannot
+express an optional handle parameter, so there is no way to say "no token" at
+that layer. The hand-written wrappers hide this: they manufacture a throwaway
+token for callers who do not supply one, and they bridge the host's own
+cancellation primitive to it.
+
+| Binding | Cancel a run by |
+|---------|-----------------|
+| Dart | passing a `CancellationToken`, or unsubscribing the stream |
+| Swift | cancelling the `Task` around `runAsync`, or passing a token to `run(envelope:options:cancel:)` |
+| Kotlin | cancelling the coroutine around `runAsync` / `streamTokens`, or passing a token to the generated `run` |
+| C# (Unity) | passing a `System.Threading.CancellationToken` to `Run` / `RunStreaming` |
+
+> **Streaming stops mid-flight; batch does not.** Token checks happen at token
+> boundaries, which only the streaming path has. A batch run honours a token
+> that is already cancelled when it starts (`check_before_run`), but once the
+> backend is generating, `run_with_options` has no token-aware path to stop it
+> and the call finishes normally. Reach for the streaming surface when a
+> mid-flight stop button matters.
+
+```swift
+// Swift — structured concurrency drives the native stop button
+let task = Task { try await model.runAsync(envelope: .text("Tell me a long story")) }
+task.cancel()   // generation stops at the next token
+```
+
+```kotlin
+// Kotlin — cancelling the collector stops native generation, not just collection
+val job = scope.launch { model.streamTokens(envelope).collect { render(it) } }
+job.cancel()
+```
+
+```csharp
+// C# / Unity
+using var cts = new CancellationTokenSource();
+var result = model.Run(Envelope.Text("Tell me a long story"), cancellationToken: cts.Token);
+cts.Cancel();
 ```
 
 **Preemptive cancel-and-replace (implemented, issue 11).** A continuous

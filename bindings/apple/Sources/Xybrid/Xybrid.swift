@@ -17,6 +17,20 @@ import UIKit
 
 // MARK: - SDK Initialization
 
+// The generated free functions below share their names with the `Xybrid`
+// members that forward to them, and inside an enum body an unqualified call
+// resolves to the static member first — i.e. to itself. The module name can't
+// disambiguate either, because this module is also called `Xybrid`. Binding
+// them here, at file scope, where the enum's members are not in scope, is the
+// one place the global is reachable by name.
+private let boltReleaseMemory = releaseMemory
+private let boltSetAutoRelease = setAutoRelease
+private let boltIsAutoReleaseEnabled = isAutoReleaseEnabled
+private let boltSetSpeculativeCloud = setSpeculativeCloud
+private let boltIsSpeculativeCloudEnabled = isSpeculativeCloudEnabled
+private let boltHasApiKey = hasApiKey
+private let boltSetProviderApiKey = setProviderApiKey
+
 /// Main entry point for the Xybrid SDK on iOS/macOS.
 ///
 /// Call `Xybrid.initialize()` once before using any other Xybrid functionality.
@@ -104,6 +118,76 @@ public enum Xybrid {
         initLock.lock()
         defer { initLock.unlock() }
         return initialized
+    }
+
+    /// Releases every idle loaded model's memory; returns how many were released.
+    ///
+    /// Wire this to the platform's low-memory signal:
+    ///
+    /// ```swift
+    /// override func didReceiveMemoryWarning() {
+    ///     super.didReceiveMemoryWarning()
+    ///     Xybrid.releaseMemory()
+    /// }
+    /// ```
+    ///
+    /// Models with a run in flight are skipped, and a released model reloads
+    /// itself the next time it is used — there is no new error to handle and
+    /// nothing to reload by hand.
+    @discardableResult
+    public static func releaseMemory() -> UInt32 {
+        boltReleaseMemory()
+    }
+
+    /// Enables or disables automatic model release for subsequent loads.
+    ///
+    /// When enabled, loading a model while the device reports memory pressure
+    /// first releases least-recently-used idle models. Off by default;
+    /// `releaseMemory()` works either way.
+    public static func setAutoRelease(_ enabled: Bool) {
+        boltSetAutoRelease(enabled)
+    }
+
+    /// Whether automatic model release is enabled process-wide.
+    public static var isAutoReleaseEnabled: Bool {
+        boltIsAutoReleaseEnabled()
+    }
+
+    /// Sets the process-wide default for speculative cloud serving.
+    ///
+    /// Speculation answers from the cloud gateway while a registry model's
+    /// weights download in the background, instead of blocking on the download.
+    ///
+    /// This is the *default* for loads that do not opt in per-load;
+    /// ``ModelLoader/fromRegistrySpeculative(_:)`` opts in explicitly and is
+    /// unaffected by this toggle. Off by default. Either way, speculation also
+    /// needs a resolvable API key and a model that is not already cached —
+    /// ``ModelLoader/willSpeculate`` reports the combined answer for a
+    /// specific loader.
+    public static func setSpeculativeCloud(_ enabled: Bool) {
+        boltSetSpeculativeCloud(enabled)
+    }
+
+    /// Whether the global speculative-cloud default is on.
+    public static var isSpeculativeCloudEnabled: Bool {
+        boltIsSpeculativeCloudEnabled()
+    }
+
+    /// Whether a Xybrid gateway API key is resolvable, from either
+    /// `initialize(apiKey:)` or the environment.
+    ///
+    /// Inference runs on-device without one; this reports whether the optional
+    /// platform features (cloud routing, telemetry) can engage.
+    public static var hasApiKey: Bool {
+        boltHasApiKey()
+    }
+
+    /// Sets the API key for a specific cloud provider.
+    ///
+    /// Separate from `initialize(apiKey:)`, which sets the Xybrid platform key.
+    /// Use this when routing to a provider the gateway forwards to.
+    public static func setProviderApiKey(provider: String, apiKey: String) {
+        boltSetProviderApiKey(provider, apiKey)
     }
 
     private static func registerPlatformObservers() {
@@ -317,7 +401,13 @@ public struct XybridTokenStream: AsyncSequence, Sendable {
         options: XybridRunOptions?
     ) {
         self.init(
-            start: { try model.runStream(envelope: envelope, options: options) },
+            start: {
+                try model.runStream(
+                    envelope: envelope,
+                    options: options,
+                    cancel: XybridCancellationToken()
+                )
+            },
             next: { try model.streamNext(streamId: $0) },
             close: { model.streamClose(streamId: $0) }
         )
@@ -498,6 +588,51 @@ public extension XybridModel {
     func run(envelope: XybridEnvelope) throws -> XybridResult {
         try run(envelope: envelope, options: nil)
     }
+
+    /// Run inference that cannot be cancelled.
+    ///
+    /// The generated `run(envelope:options:cancel:)` takes the stop button as a
+    /// required argument — BoltFFI cannot express an optional handle parameter —
+    /// so this overload manufactures a token that is never signalled. Reach for
+    /// the three-argument form, or `runAsync`, when you want to stop a run.
+    func run(envelope: XybridEnvelope, options: XybridRunOptions?) throws -> XybridResult {
+        try run(envelope: envelope, options: options, cancel: XybridCancellationToken())
+    }
+
+    /// Context-aware run that cannot be cancelled. See `run(envelope:options:)`.
+    func runWithContext(
+        envelope: XybridEnvelope,
+        context: XybridConversationContext,
+        options: XybridRunOptions?
+    ) throws -> XybridResult {
+        try runWithContext(
+            envelope: envelope,
+            context: context,
+            options: options,
+            cancel: XybridCancellationToken()
+        )
+    }
+
+    /// Start a context-aware pull stream that cannot be cancelled.
+    /// See `run(envelope:options:)`.
+    func runStreamWithContext(
+        envelope: XybridEnvelope,
+        context: XybridConversationContext,
+        options: XybridRunOptions?
+    ) throws -> UInt64 {
+        try runStreamWithContext(
+            envelope: envelope,
+            context: context,
+            options: options,
+            cancel: XybridCancellationToken()
+        )
+    }
+
+    /// Start a pull-based stream that cannot be cancelled.
+    /// See `run(envelope:options:)`.
+    func runStream(envelope: XybridEnvelope, options: XybridRunOptions?) throws -> UInt64 {
+        try runStream(envelope: envelope, options: options, cancel: XybridCancellationToken())
+    }
 }
 
 // MARK: - Async conveniences
@@ -537,11 +672,31 @@ public extension XybridModel {
     }
 
     /// Run inference without blocking the calling thread or actor.
+    ///
+    /// Honours Swift's structured concurrency: cancelling the surrounding
+    /// `Task` signals the native stop button. The run then returns or throws
+    /// whatever the backend reports for a cancelled run — it does not surface
+    /// `CancellationError`.
+    ///
+    /// Cancellation is checked at token boundaries **while streaming**. A batch
+    /// run is only cancellable before generation starts: once the backend is
+    /// producing, `run_with_options` has no token-aware path to stop it, so the
+    /// call finishes normally. Use the streaming surface when a mid-flight stop
+    /// button matters.
     func runAsync(
         envelope: XybridEnvelope,
         options: XybridRunOptions? = nil
     ) async throws -> XybridResult {
-        try await Task.detached { try self.run(envelope: envelope, options: options) }.value
+        let cancel = XybridCancellationToken()
+        return try await withTaskCancellationHandler {
+            try await Task.detached {
+                try self.run(envelope: envelope, options: options, cancel: cancel)
+            }.value
+        } onCancel: {
+            // Runs on the cancelling thread; `cancel()` is safe from any thread
+            // and is a no-op once the run has finished.
+            cancel.cancel()
+        }
     }
 
     /// Warm up the model without blocking the calling thread or actor.
