@@ -164,6 +164,46 @@ object Xybrid {
     @JvmStatic
     val isAutoReleaseEnabled: Boolean get() = ai.xybrid.isAutoReleaseEnabled()
 
+    /**
+     * Set the process-wide default for speculative cloud serving.
+     *
+     * Speculation answers from the cloud gateway while a registry model's
+     * weights download in the background, instead of blocking on the download.
+     *
+     * This is the *default* for loads that do not opt in per-load;
+     * [XybridModelLoader.fromRegistrySpeculative] opts in explicitly and is
+     * unaffected by this toggle. Off by default. Either way, speculation also
+     * needs a resolvable API key and a model that is not already cached —
+     * [XybridModelLoader.willSpeculate] reports the combined answer for a
+     * specific loader.
+     */
+    @JvmStatic
+    fun setSpeculativeCloud(enabled: Boolean) = ai.xybrid.setSpeculativeCloud(enabled)
+
+    /** Whether the global speculative-cloud default is on. */
+    @JvmStatic
+    val isSpeculativeCloudEnabled: Boolean get() = ai.xybrid.isSpeculativeCloudEnabled()
+
+    /**
+     * Whether a Xybrid gateway API key is resolvable, from either [init] or
+     * the environment.
+     *
+     * Inference runs on-device without one; this reports whether the optional
+     * platform features (cloud routing, telemetry) can engage.
+     */
+    @JvmStatic
+    val hasApiKey: Boolean get() = ai.xybrid.hasApiKey()
+
+    /**
+     * Set the API key for a specific cloud provider.
+     *
+     * Separate from [init]'s `apiKey`, which sets the Xybrid platform key. Use
+     * this when routing to a provider the gateway forwards to.
+     */
+    @JvmStatic
+    fun setProviderApiKey(provider: String, apiKey: String) =
+        ai.xybrid.setProviderApiKey(provider, apiKey)
+
     private fun registerPlatformObservers(appContext: Context) {
         val batteryReceiver = object : BroadcastReceiver() {
             override fun onReceive(received: Context, intent: Intent) {
