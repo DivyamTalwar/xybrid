@@ -401,7 +401,13 @@ public struct XybridTokenStream: AsyncSequence, Sendable {
         options: XybridRunOptions?
     ) {
         self.init(
-            start: { try model.runStream(envelope: envelope, options: options) },
+            start: {
+                try model.runStream(
+                    envelope: envelope,
+                    options: options,
+                    cancel: XybridCancellationToken()
+                )
+            },
             next: { try model.streamNext(streamId: $0) },
             close: { model.streamClose(streamId: $0) }
         )
@@ -582,6 +588,51 @@ public extension XybridModel {
     func run(envelope: XybridEnvelope) throws -> XybridResult {
         try run(envelope: envelope, options: nil)
     }
+
+    /// Run inference that cannot be cancelled.
+    ///
+    /// The generated `run(envelope:options:cancel:)` takes the stop button as a
+    /// required argument — BoltFFI cannot express an optional handle parameter —
+    /// so this overload manufactures a token that is never signalled. Reach for
+    /// the three-argument form, or `runAsync`, when you want to stop a run.
+    func run(envelope: XybridEnvelope, options: XybridRunOptions?) throws -> XybridResult {
+        try run(envelope: envelope, options: options, cancel: XybridCancellationToken())
+    }
+
+    /// Context-aware run that cannot be cancelled. See `run(envelope:options:)`.
+    func runWithContext(
+        envelope: XybridEnvelope,
+        context: XybridConversationContext,
+        options: XybridRunOptions?
+    ) throws -> XybridResult {
+        try runWithContext(
+            envelope: envelope,
+            context: context,
+            options: options,
+            cancel: XybridCancellationToken()
+        )
+    }
+
+    /// Start a context-aware pull stream that cannot be cancelled.
+    /// See `run(envelope:options:)`.
+    func runStreamWithContext(
+        envelope: XybridEnvelope,
+        context: XybridConversationContext,
+        options: XybridRunOptions?
+    ) throws -> UInt64 {
+        try runStreamWithContext(
+            envelope: envelope,
+            context: context,
+            options: options,
+            cancel: XybridCancellationToken()
+        )
+    }
+
+    /// Start a pull-based stream that cannot be cancelled.
+    /// See `run(envelope:options:)`.
+    func runStream(envelope: XybridEnvelope, options: XybridRunOptions?) throws -> UInt64 {
+        try runStream(envelope: envelope, options: options, cancel: XybridCancellationToken())
+    }
 }
 
 // MARK: - Async conveniences
@@ -621,11 +672,31 @@ public extension XybridModel {
     }
 
     /// Run inference without blocking the calling thread or actor.
+    ///
+    /// Honours Swift's structured concurrency: cancelling the surrounding
+    /// `Task` signals the native stop button. The run then returns or throws
+    /// whatever the backend reports for a cancelled run — it does not surface
+    /// `CancellationError`.
+    ///
+    /// Cancellation is checked at token boundaries **while streaming**. A batch
+    /// run is only cancellable before generation starts: once the backend is
+    /// producing, `run_with_options` has no token-aware path to stop it, so the
+    /// call finishes normally. Use the streaming surface when a mid-flight stop
+    /// button matters.
     func runAsync(
         envelope: XybridEnvelope,
         options: XybridRunOptions? = nil
     ) async throws -> XybridResult {
-        try await Task.detached { try self.run(envelope: envelope, options: options) }.value
+        let cancel = XybridCancellationToken()
+        return try await withTaskCancellationHandler {
+            try await Task.detached {
+                try self.run(envelope: envelope, options: options, cancel: cancel)
+            }.value
+        } onCancel: {
+            // Runs on the cancelling thread; `cancel()` is safe from any thread
+            // and is a no-op once the run has finished.
+            cancel.cancel()
+        }
     }
 
     /// Warm up the model without blocking the calling thread or actor.
