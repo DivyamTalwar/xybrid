@@ -635,9 +635,15 @@ class XybridModule(reactContext: ReactApplicationContext) :
         ai.xybrid.XybridDownloadState.DOWNLOADING -> "downloading"
         ai.xybrid.XybridDownloadState.READY -> "ready"
         ai.xybrid.XybridDownloadState.FAILED -> "failed"
+        ai.xybrid.XybridDownloadState.CANCELLED -> "cancelled"
       },
     )
     out.putDouble("progress", s.progress.toDouble())
+    out.putDouble("downloadedBytes", s.downloadedBytes.toDouble())
+    // Left absent rather than 0 when the source declares no size, so JS can
+    // tell "unknown total" from "zero-byte model".
+    val total = s.totalBytes
+    if (total != null) out.putDouble("totalBytes", total.toDouble()) else out.putNull("totalBytes")
     return out
   }
 
@@ -694,6 +700,7 @@ class XybridModule(reactContext: ReactApplicationContext) :
       is XybridError.MissingArtifact -> "xybrid_missing_artifact"
       is XybridError.UnsupportedModelCapability -> "xybrid_unsupported_model_capability"
       is XybridError.UnsupportedBackendCapability -> "xybrid_unsupported_backend_capability"
+      is XybridError.Cancelled -> "xybrid_cancelled"
     }
     promise.reject(code, e.message ?: "Xybrid error", e)
   }
