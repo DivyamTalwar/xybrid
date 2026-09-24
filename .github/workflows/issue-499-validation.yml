@@ -1,36 +1,32 @@
 name: Issue 499 validation workspace
-
 on:
   push:
     branches: [work/499-cloud-options-validation]
-
 permissions:
   contents: read
-
 jobs:
-  source:
+  baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Package tracked source for review
-        run: |
-          python3 - <<'PY'
-          import pathlib, subprocess, zipfile
-          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
-          with zipfile.ZipFile('/tmp/issue-499-source.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-              for name in paths:
-                  path = pathlib.Path(name)
-                  if not name or not path.is_file() or path.is_symlink() or path.stat().st_size > 2_000_000:
-                      continue
-                  try:
-                      path.read_text(encoding='utf-8')
-                  except (UnicodeError, OSError):
-                      continue
-                  archive.write(path, name)
-          PY
-      - uses: actions/upload-artifact@v4
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
-          name: issue-499-source
-          path: /tmp/issue-499-source.zip
-          retention-days: 3
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: issue-499
+          cache-on-failure: true
+      - uses: actions/cache@v4
+        id: bolt
+        with:
+          path: ~/.cargo/bin/boltffi
+          key: issue-499-boltffi-0.30.1-${{ runner.os }}
+      - name: Install pinned binding generator
+        if: steps.bolt.outputs.cache-hit != 'true'
+        run: cargo install boltffi_cli --version 0.30.1 --locked
+      - name: Upstream facade and Bolt tests
+        run: cargo test -p xybrid-ffi-facade -p xybrid-bolt --lib
