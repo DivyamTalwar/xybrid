@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Applications can manage model storage from every binding.** Swift, Kotlin,
+  Python, Unity C#, and Dart now expose aggregate cache status, physical entry
+  details, preferred paths, ready-model IDs, per-model deletion, and full cache
+  clearing. Lookups and per-model deletion validate identifiers
+  before constructing paths and removes registry, extraction, direct Hugging
+  Face, and owned Hub-cache data without touching sibling models (#505).
+  Ready counts exclude incomplete extractions. Dart cache operations run off
+  the UI isolate, and Swift and Kotlin pair each call with an `…Async` twin.
 - **Multi-stage pipelines on Swift, Kotlin and Unity.** Those SDKs had no
   pipelines at all — only Flutter and Rust did. `XybridPipeline` (`Pipeline`
   on Unity) loads from YAML, a file or a bundle, lists its stages and runs

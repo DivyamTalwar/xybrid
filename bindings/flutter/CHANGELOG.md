@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+* Added: complete model-cache management through `Xybrid`, including aggregate
+  status, physical entries, preferred paths, ready-model IDs,
+  per-model deletion, and full clearing. These new operations return Futures
+  and run off the UI isolate. The existing `isModelCached` retains
+  its ready-to-load meaning; `hasCachedModelData` also counts archives and
+  shared downloads that still need extraction (xybrid-ai/xybrid#505)
 * Added: `LoadProgress` now carries `downloadedBytes` and `totalBytes` alongside
   `progress`, so a UI can show megabytes, speed and time remaining instead of a
   bare percentage. `totalBytes` is null when the source publishes no size.

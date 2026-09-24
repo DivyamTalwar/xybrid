@@ -214,7 +214,7 @@ pub use xybrid_core::execution::template as execution_template;
 
 // SDK types (new API)
 pub use benchmark::{compare_benchmarks, BenchmarkResult, ExecutionProviderInfo};
-pub use cache::{CacheManager, CacheStatus, SdkCacheProvider};
+pub use cache::{CacheEntryInfo, CacheEntryLocation, CacheManager, CacheStatus, SdkCacheProvider};
 pub use device::{device_id, Device};
 pub use download::{DownloadState, DownloadStatus, ModelDownload};
 pub use llm::{
