@@ -66,6 +66,10 @@ export interface WireRunOptions {
   fallbackToCloud?: boolean;
   maxGraceTokens?: number;
   correlationId?: string;
+  /** Caller-resolved cloud overrides; omitted fields retain current routing. */
+  cloudProvider?: string;
+  cloudModel?: string;
+  cloudGatewayUrl?: string;
   /** Conversation-context handle. */
   context?: string;
   /** Cancellation-token handle. */
@@ -273,6 +277,10 @@ export interface RunOptionsInput {
   fallbackToCloud?: boolean;
   maxGraceTokens?: number;
   correlationId?: string;
+  /** Caller-resolved cloud overrides; omitted fields retain current routing. */
+  cloudProvider?: string;
+  cloudModel?: string;
+  cloudGatewayUrl?: string;
 }
 
 /**
@@ -302,6 +310,9 @@ export function toWireRunOptions(
   if (options?.fallbackToCloud !== undefined) wire.fallbackToCloud = options.fallbackToCloud;
   if (options?.maxGraceTokens !== undefined) wire.maxGraceTokens = options.maxGraceTokens;
   if (options?.correlationId !== undefined) wire.correlationId = options.correlationId;
+  if (options?.cloudProvider !== undefined) wire.cloudProvider = options.cloudProvider;
+  if (options?.cloudModel !== undefined) wire.cloudModel = options.cloudModel;
+  if (options?.cloudGatewayUrl !== undefined) wire.cloudGatewayUrl = options.cloudGatewayUrl;
   if (handles.context) wire.context = handles.context;
   if (handles.cancel) wire.cancel = handles.cancel;
   return Object.keys(wire).length > 0 ? wire : null;

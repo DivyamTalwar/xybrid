@@ -126,3 +126,23 @@ def _result_wire(*, typed_reasoning: str | None = None) -> bytes:
             bolt._boltffi_wire_optional(typed_reasoning, bolt._boltffi_wire_string)
         )
     return b"".join(fields)
+
+
+def test_cloud_run_options_append_only_wire_and_constructor_defaults() -> None:
+    import struct
+
+    legacy = bolt.XybridRunOptions(None, [], False, 0, None)
+    assert legacy.cloud_provider is None
+    assert legacy.cloud_model is None
+    assert legacy.cloud_gateway_url is None
+    # Five historical fields retain their order; the three optional strings
+    # occupy the tail. This is not support for mixing native/wrapper versions.
+    prefix = b"\x00" + struct.pack("<I", 0) + b"\x00" + struct.pack("<I", 0) + b"\x00"
+    assert legacy._boltffi_wire() == prefix + b"\x00\x00\x00"
+    options = bolt.XybridRunOptions(None, [], False, 0, None,
+        "provider-x", "model-y", "https://api.xybrid.dev/v1")
+    data = options._boltffi_wire()
+    assert data.startswith(prefix)
+    decoded = bolt.XybridRunOptions._boltffi_from_wire(data)
+    assert decoded == options
+    assert not decoded.fallback_to_cloud

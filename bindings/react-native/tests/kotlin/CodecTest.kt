@@ -116,6 +116,9 @@ fun main() {
       "fallbackToCloud" to true,
       "maxGraceTokens" to 8.0,
       "correlationId" to "req",
+      "cloudProvider" to "provider-x",
+      "cloudModel" to "model-y",
+      "cloudGatewayUrl" to "https://api.xybrid.dev/v1",
       "context" to "context:1",
       "cancel" to "cancel:1",
     ),
@@ -130,6 +133,13 @@ fun main() {
   check(options.fallbackToCloud && options.maxGraceTokens == 8u, "platform knobs")
   check(request.context == "context:1" && request.cancel == "cancel:1", "handles")
   check(XybridCodec.decodeRunRequest(null).options == null, "null options")
+  check(options.cloudProvider == "provider-x" && options.cloudModel == "model-y", "cloud overrides")
+  check(options.cloudGatewayUrl == "https://api.xybrid.dev/v1", "cloud gateway")
+  val legacy = XybridRunOptions(null, emptyList(), false, 0u, null)
+  check(legacy.cloudProvider == null && legacy.cloudModel == null && legacy.cloudGatewayUrl == null, "legacy constructor defaults")
+  val partial = XybridCodec.decodeRunRequest(js("cloudModel" to "only-model")).options!!
+  check(!partial.fallbackToCloud && partial.cloudProvider == null && partial.cloudGatewayUrl == null, "no implicit defaults")
+  expectInvalidArgument("cloud model is not a string") { XybridCodec.decodeRunRequest(js("cloudModel" to 42)) }
 
   expectInvalidArgument("negative maxTokens") {
     XybridCodec.decodeRunRequest(js("generationConfig" to js("maxTokens" to -1.0)))

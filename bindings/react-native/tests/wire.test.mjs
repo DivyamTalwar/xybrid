@@ -190,3 +190,11 @@ test('base64 matches Node for every length and PCM stays little-endian', () => {
   assert.equal(decoded.readFloatLE(8), -1);
   assert.equal(float32ToBase64([0.5]), float32ToBase64(new Float32Array([0.5])));
 });
+
+
+test('cloud overrides stay optional and do not implicitly enable fallback', () => {
+  assert.equal(wire.toWireRunOptions({}), null);
+  const options = { cloudProvider: 'provider-x', cloudModel: 'model-y', cloudGatewayUrl: 'https://api.xybrid.dev/v1', fallbackToCloud: false };
+  assert.deepEqual(wire.toWireRunOptions(options), options);
+  assert.deepEqual(wire.toWireRunOptions({ cloudModel: 'only-model' }), { cloudModel: 'only-model' });
+});

@@ -97,6 +97,9 @@ do {
     "fallbackToCloud": true,
     "maxGraceTokens": 8,
     "correlationId": "req",
+    "cloudProvider": "provider-x",
+    "cloudModel": "model-y",
+    "cloudGatewayUrl": "https://api.xybrid.dev/v1",
     "context": "context:1",
     "cancel": "cancel:1",
   ]))
@@ -114,6 +117,12 @@ do {
 
   let empty = try XybridCodec.decodeRunRequest(nil)
   check(empty.options == nil && empty.context == nil, "null options")
+  check(options.cloudProvider == "provider-x" && options.cloudModel == "model-y", "cloud overrides")
+  check(options.cloudGatewayUrl == "https://api.xybrid.dev/v1", "cloud gateway")
+  let legacy = XybridRunOptions(generationConfig: nil, abortOn: [], fallbackToCloud: false, maxGraceTokens: 0, correlationId: nil)
+  check(legacy.cloudProvider == nil && legacy.cloudModel == nil && legacy.cloudGatewayUrl == nil, "legacy constructor defaults")
+  let partial = try XybridCodec.decodeRunRequest(js(["cloudModel": "only-model"])).options!
+  check(!partial.fallbackToCloud && partial.cloudProvider == nil && partial.cloudGatewayUrl == nil, "no implicit defaults")
 } catch {
   check(false, "run options threw \(error)")
 }

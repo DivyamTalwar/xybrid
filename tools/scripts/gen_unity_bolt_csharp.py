@@ -72,6 +72,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cloud_run_options_defaults import add_cloud_run_options_defaults
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOLT_DIR = REPO_ROOT / "crates" / "xybrid-bolt"
 RAW_DIR = BOLT_DIR / "dist" / "csharp"
@@ -418,6 +420,8 @@ def generate() -> dict[str, str]:
         content = src.read_text(encoding="utf-8")
         content, n = _downlevel_record_structs(content)
         record_structs += n
+        if src.name == "XybridRunOptions.cs":
+            content = add_cloud_run_options_defaults(content, "csharp")
         content, n = _rewrite_unsafe_sizeof(content)
         unsafe_sizeof += n
         if src.name == ENVELOPE_KIND_FILE:

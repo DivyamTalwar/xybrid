@@ -562,6 +562,10 @@ pub struct XybridRunOptions {
     pub fallback_to_cloud: bool,
     pub max_grace_tokens: u32,
     pub correlation_id: Option<String>,
+    // Append-only wire tail. Defaults belong to the caller, not the facade.
+    pub cloud_provider: Option<String>,
+    pub cloud_model: Option<String>,
+    pub cloud_gateway_url: Option<String>,
 }
 
 impl From<XybridRunOptions> for facade::RunOptions {
@@ -572,6 +576,9 @@ impl From<XybridRunOptions> for facade::RunOptions {
             fallback_to_cloud: o.fallback_to_cloud,
             max_grace_tokens: o.max_grace_tokens,
             correlation_id: o.correlation_id,
+            cloud_provider: o.cloud_provider,
+            cloud_model: o.cloud_model,
+            cloud_gateway_url: o.cloud_gateway_url,
         }
     }
 }
@@ -2410,6 +2417,9 @@ stages:
             fallback_to_cloud: false,
             max_grace_tokens: 0,
             correlation_id: None,
+            cloud_provider: None,
+            cloud_model: None,
+            cloud_gateway_url: None,
         };
 
         let envelope = XybridEnvelope {
@@ -2483,9 +2493,33 @@ stages:
             fallback_to_cloud: true,
             max_grace_tokens: 4,
             correlation_id: Some("trace".into()),
+            cloud_provider: Some("provider-x".into()),
+            cloud_model: Some("model-y".into()),
+            cloud_gateway_url: Some("https://api.xybrid.dev/v1".into()),
         };
         let facade_opts: facade::RunOptions = opts.into();
         assert!(facade_opts.fallback_to_cloud);
+        assert_eq!(facade_opts.cloud_provider.as_deref(), Some("provider-x"));
+        assert_eq!(facade_opts.cloud_model.as_deref(), Some("model-y"));
+        assert_eq!(
+            facade_opts.cloud_gateway_url.as_deref(),
+            Some("https://api.xybrid.dev/v1")
+        );
+        let mut envelope = facade::Envelope::text("hello".into()).into_sdk().unwrap();
+        facade_opts
+            .apply_cloud_fallback_metadata(&mut envelope)
+            .unwrap();
+        assert_eq!(envelope.metadata["model"], "model-y");
+        let disabled = facade::RunOptions {
+            fallback_to_cloud: false,
+            ..facade_opts.clone()
+        };
+        let mut untouched = facade::Envelope::text("hello".into()).into_sdk().unwrap();
+        let before = untouched.metadata.clone();
+        disabled
+            .apply_cloud_fallback_metadata(&mut untouched)
+            .unwrap();
+        assert_eq!(untouched.metadata, before);
         assert_eq!(facade_opts.max_grace_tokens, 4);
         assert_eq!(
             facade_opts.abort_on,

@@ -39,6 +39,8 @@ use std::time::Duration;
 
 use xybrid_sdk as sdk;
 
+mod cloud_fallback;
+
 // ============================================================================
 // Error
 // ============================================================================
@@ -999,6 +1001,14 @@ pub struct RunOptions {
     pub max_grace_tokens: u32,
 
     pub correlation_id: Option<String>,
+
+    /// Optional cloud provider override. The caller owns default resolution.
+    pub cloud_provider: Option<String>,
+    /// Optional cloud model override. Omission preserves envelope metadata.
+    pub cloud_model: Option<String>,
+    /// Optional gateway base URL, validated when fallback is enabled.
+    /// No implicit gateway is introduced; callers resolve their own defaults.
+    pub cloud_gateway_url: Option<String>,
 }
 
 impl RunOptions {
@@ -1008,7 +1018,8 @@ impl RunOptions {
     ///
     /// # Errors
     ///
-    /// See [`GenerationConfig::apply_over`].
+    /// See [`GenerationConfig::apply_over`]. An invalid active cloud gateway
+    /// override also returns [`Error::ConfigError`].
     pub fn to_sdk(&self, cancel: Option<&CancellationToken>) -> Result<sdk::RunOptions> {
         self.to_sdk_over(cancel, sdk::GenerationConfig::default())
     }
@@ -1017,12 +1028,14 @@ impl RunOptions {
     ///
     /// # Errors
     ///
-    /// See [`GenerationConfig::apply_over`].
+    /// See [`GenerationConfig::apply_over`]. An invalid active cloud gateway
+    /// override also returns [`Error::ConfigError`].
     pub fn to_sdk_over(
         &self,
         cancel: Option<&CancellationToken>,
         generation_base: sdk::GenerationConfig,
     ) -> Result<sdk::RunOptions> {
+        self.validated_cloud_gateway_url()?;
         let mut policy = sdk::AbortPolicy::default()
             .with_cloud_fallback(self.fallback_to_cloud)
             .with_max_grace_tokens(self.max_grace_tokens);
@@ -1554,8 +1567,8 @@ impl Pipeline {
     /// # Errors
     ///
     /// [`Error::ConfigError`] when `options` sets `generation_config` or
-    /// `abort_on` — a pipeline run cannot honour either, and ignoring them
-    /// would look like success. Per-stage generation settings belong in the
+    /// `abort_on` or cloud fallback overrides — a pipeline cannot honour these,
+    /// and ignoring them would look like success. Per-stage generation settings belong in the
     /// pipeline YAML. Otherwise any load or stage failure.
     pub fn run(&self, envelope: Envelope, options: RunOptions) -> Result<PipelineResult> {
         let sdk_options = pipeline_run_options(options)?;
@@ -1592,6 +1605,14 @@ fn pipeline_run_options(options: RunOptions) -> Result<sdk::RunOptions> {
     if !options.abort_on.is_empty() {
         return Err(Error::ConfigError {
             message: "abort_on is not supported on pipeline runs".into(),
+        });
+    }
+    if options.cloud_provider.is_some()
+        || options.cloud_model.is_some()
+        || options.cloud_gateway_url.is_some()
+    {
+        return Err(Error::ConfigError {
+            message: "cloud fallback overrides are not supported on pipeline runs".into(),
         });
     }
     let mut sdk_options = sdk::RunOptions::new();
@@ -2058,7 +2079,8 @@ impl XybridModel {
         options: RunOptions,
         cancel: Option<Arc<CancellationToken>>,
     ) -> Result<InferenceResult> {
-        let env = envelope.into_sdk()?;
+        let mut env = envelope.into_sdk()?;
+        options.apply_cloud_fallback_metadata(&mut env)?;
         let opts =
             options.to_sdk_over(cancel.as_deref(), self.inner.default_generation_config())?;
         let result = self
@@ -2107,7 +2129,8 @@ impl XybridModel {
         options: RunOptions,
         cancel: Option<Arc<CancellationToken>>,
     ) -> Result<InferenceResult> {
-        let env = envelope.into_sdk()?;
+        let mut env = envelope.into_sdk()?;
+        options.apply_cloud_fallback_metadata(&mut env)?;
         let ctx = context.snapshot();
         let opts =
             options.to_sdk_over(cancel.as_deref(), self.inner.default_generation_config())?;
@@ -2145,7 +2168,8 @@ impl XybridModel {
         options: RunOptions,
         cancel: Option<Arc<CancellationToken>>,
     ) -> Result<Arc<StreamingSession>> {
-        let envelope = envelope.into_sdk()?;
+        let mut envelope = envelope.into_sdk()?;
+        options.apply_cloud_fallback_metadata(&mut envelope)?;
         let options =
             options.to_sdk_over(cancel.as_deref(), self.inner.default_generation_config())?;
         let model = self.inner.clone();
@@ -2189,7 +2213,8 @@ impl XybridModel {
         options: RunOptions,
         cancel: Option<Arc<CancellationToken>>,
     ) -> Result<Arc<StreamingSession>> {
-        let envelope = envelope.into_sdk()?;
+        let mut envelope = envelope.into_sdk()?;
+        options.apply_cloud_fallback_metadata(&mut envelope)?;
         let ctx = context.snapshot();
         let options =
             options.to_sdk_over(cancel.as_deref(), self.inner.default_generation_config())?;
@@ -3312,6 +3337,9 @@ mod tests {
             fallback_to_cloud: false,
             max_grace_tokens: 0,
             correlation_id: None,
+            cloud_provider: None,
+            cloud_model: None,
+            cloud_gateway_url: None,
         }
     }
 
@@ -3863,6 +3891,9 @@ stages:
             fallback_to_cloud: true,
             max_grace_tokens: 16,
             correlation_id: Some("trace-1".into()),
+            cloud_provider: None,
+            cloud_model: None,
+            cloud_gateway_url: None,
         };
         let sdk_opts = opts
             .to_sdk(Some(&cancel))

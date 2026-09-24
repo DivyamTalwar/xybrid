@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Cloud provider, model and gateway overrides are now exposed on shared FFI
+  `RunOptions` and the Swift, Kotlin, Unity, Python and React Native bindings.
+  Validation and envelope lowering live in the facade; callers own defaults,
+  Flutter keeps its existing defaults, and disabling fallback ignores the
+  overrides. Generated constructor arguments default to absent, but bindings
+  and native libraries must be updated together (append-only wire fields).
+
 - **React Native catches up with the other SDKs, and runs on iOS.** The iOS
   half of `react-native-xybrid` never compiled against the SDK it bundles, and
   its method selectors did not match the ones React Native's code generator

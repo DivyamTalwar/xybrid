@@ -69,13 +69,14 @@ stage_dir="$(mktemp -d)"
 trap 'rm -rf "$stage_dir"' EXIT
 swift_staged="$stage_dir/xybrid_bolt.swift"
 
-python3 - "$swift_src" "$swift_staged" <<'PY'
+PYTHONPATH="$repo_root/tools/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - "$swift_src" "$swift_staged" <<'PY'
 import re
 import sys
 from pathlib import Path
+from cloud_run_options_defaults import add_cloud_run_options_defaults
 
 source_path, destination_path = map(Path, sys.argv[1:])
-source = source_path.read_text()
+source = add_cloud_run_options_defaults(source_path.read_text(), "swift")
 
 initializer = "        reasoningContent: String?\n    ) {"
 if source.count(initializer) != 1:

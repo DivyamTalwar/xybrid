@@ -36,6 +36,7 @@ namespace Xybrid
         /// Runs inference on this model with the provided input envelope.
         /// </summary>
         /// <param name="envelope">The input data for inference.</param>
+        /// <param name="options">Optional per-run abort policy and caller-resolved cloud overrides.</param>
         /// <param name="config">Optional generation config for LLM parameters. Pass null for model defaults.</param>
         /// <returns>The inference result (<see cref="InferenceResult.Success"/> is false if inference failed).</returns>
         /// <exception cref="ArgumentNullException">Thrown if envelope is null.</exception>
@@ -52,7 +53,8 @@ namespace Xybrid
         public InferenceResult Run(
             Envelope envelope,
             GenerationConfig config = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            RunOptions options = null)
         {
             ThrowIfDisposed();
             if (envelope == null)
@@ -62,7 +64,7 @@ namespace Xybrid
 
             using (var cancel = BoltCancellation.From(cancellationToken))
             {
-                return Execute(() => _bolt.Run(envelope.Bolt, ToOptions(config), cancel.Token));
+                return Execute(() => _bolt.Run(envelope.Bolt, ToOptions(config, options), cancel.Token));
             }
         }
 
@@ -114,6 +116,7 @@ namespace Xybrid
         /// </summary>
         /// <param name="envelope">The input data for inference.</param>
         /// <param name="context">The conversation context with history.</param>
+        /// <param name="options">Optional per-run abort policy and caller-resolved cloud overrides.</param>
         /// <param name="config">Optional generation config for LLM parameters. Pass null for model defaults.</param>
         /// <returns>The inference result.</returns>
         /// <remarks>
@@ -136,7 +139,8 @@ namespace Xybrid
             Envelope envelope,
             ConversationContext context,
             GenerationConfig config = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            RunOptions options = null)
         {
             ThrowIfDisposed();
             if (envelope == null)
@@ -151,7 +155,7 @@ namespace Xybrid
             using (var cancel = BoltCancellation.From(cancellationToken))
             {
                 return Execute(() =>
-                    _bolt.RunWithContext(envelope.Bolt, context.Bolt, ToOptions(config), cancel.Token));
+                    _bolt.RunWithContext(envelope.Bolt, context.Bolt, ToOptions(config, options), cancel.Token));
             }
         }
 
@@ -296,6 +300,7 @@ namespace Xybrid
         /// </summary>
         /// <param name="envelope">The input data for inference.</param>
         /// <param name="onToken">Callback invoked for each token, on the calling thread.</param>
+        /// <param name="options">Optional per-run abort policy and caller-resolved cloud overrides.</param>
         /// <param name="config">Optional generation config. Pass null for model defaults.</param>
         /// <returns>The final inference result after all tokens are emitted.</returns>
         /// <exception cref="ArgumentNullException">Thrown if envelope or onToken is null.</exception>
@@ -310,7 +315,8 @@ namespace Xybrid
             Envelope envelope,
             Action<StreamToken> onToken,
             GenerationConfig config = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            RunOptions options = null)
         {
             ThrowIfDisposed();
             if (envelope == null)
@@ -325,7 +331,7 @@ namespace Xybrid
             using (var cancel = BoltCancellation.From(cancellationToken))
             {
                 return Execute(() =>
-                    _bolt.RunStreaming(envelope.Bolt, Forward(onToken), ToOptions(config), cancel.Token));
+                    _bolt.RunStreaming(envelope.Bolt, Forward(onToken), ToOptions(config, options), cancel.Token));
             }
         }
 
@@ -335,6 +341,7 @@ namespace Xybrid
         /// <param name="envelope">The input data for inference.</param>
         /// <param name="context">The conversation context with history.</param>
         /// <param name="onToken">Callback invoked for each token.</param>
+        /// <param name="options">Optional per-run abort policy and caller-resolved cloud overrides.</param>
         /// <param name="config">Optional generation config. Pass null for model defaults.</param>
         /// <returns>The final inference result after all tokens are emitted.</returns>
         /// <exception cref="ArgumentNullException">Thrown if any argument is null.</exception>
@@ -350,7 +357,8 @@ namespace Xybrid
             ConversationContext context,
             Action<StreamToken> onToken,
             GenerationConfig config = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            RunOptions options = null)
         {
             ThrowIfDisposed();
             if (envelope == null)
@@ -369,7 +377,7 @@ namespace Xybrid
             using (var cancel = BoltCancellation.From(cancellationToken))
             {
                 return Execute(() => _bolt.RunStreamingWithContext(
-                    envelope.Bolt, Forward(onToken), context.Bolt, ToOptions(config), cancel.Token));
+                    envelope.Bolt, Forward(onToken), context.Bolt, ToOptions(config, options), cancel.Token));
             }
         }
 
@@ -451,8 +459,12 @@ namespace Xybrid
         private static VoiceInfo MapVoice(XybridBolt.XybridVoiceInfo voice) =>
             new VoiceInfo(voice.Id, voice.Name, voice.Gender, voice.Language, voice.Style);
 
-        private static XybridBolt.XybridRunOptions? ToOptions(GenerationConfig config)
+        private static XybridBolt.XybridRunOptions? ToOptions(GenerationConfig config, RunOptions options)
         {
+            if (options != null)
+            {
+                return options.ToBolt(config);
+            }
             if (config == null)
             {
                 return null;

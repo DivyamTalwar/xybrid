@@ -46,6 +46,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cloud_run_options_defaults import add_cloud_run_options_defaults
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOLT_DIR = REPO_ROOT / "crates" / "xybrid-bolt"
 RAW_FILE = BOLT_DIR / "dist" / "android" / "kotlin" / "ai" / "xybrid" / "XybridBolt.kt"
@@ -192,6 +194,7 @@ def render() -> tuple[str, dict[str, bytes]]:
         result_field,
         "    val reasoningContent: String? = null\n) {",
     )
+    source = add_cloud_run_options_defaults(source, "kotlin")
     source = _add_result_wire_compatibility(source)
     source = _qualify_kotlin_result(source)
     if overrides == 0:

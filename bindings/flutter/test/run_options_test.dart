@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xybrid_flutter/src/runtime_config.dart';
 import 'package:xybrid_flutter/xybrid_flutter.dart';
 
 void main() {
@@ -59,4 +60,18 @@ void main() {
     expect(options.toFfi().maxGraceTokens, 3);
     expect(options.toFfi().fallbackToCloud, isTrue);
   });
+
+  test('gateway default remains caller-owned and a per-run override wins', () {
+    final defaults = const RunOptions.cloudFallback().toFfi();
+    expect(defaults.cloudGatewayUrl, XybridRuntimeConfig.gatewayUrl);
+    final explicit = const RunOptions.cloudFallback(
+      cloudProvider: 'provider-x',
+      cloudModel: 'model-y',
+      cloudGatewayUrl: 'https://api.xybrid.dev/v1/custom',
+    ).toFfi();
+    expect(explicit.cloudProvider, 'provider-x');
+    expect(explicit.cloudModel, 'model-y');
+    expect(explicit.cloudGatewayUrl, 'https://api.xybrid.dev/v1/custom');
+  });
+
 }

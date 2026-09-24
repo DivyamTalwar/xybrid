@@ -37,6 +37,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cloud_run_options_defaults import add_cloud_run_options_defaults
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOLT_DIR = REPO_ROOT / "crates" / "xybrid-bolt"
 RAW_DIR = BOLT_DIR / "dist" / "python" / "xybrid_bolt"
@@ -152,6 +154,7 @@ def generate() -> list[Path]:
         if source.count(target) != 1:
             sys.exit(f"error: expected one XybridResult reasoning field in {path}")
         source = source.replace(target, replacement)
+        source = add_cloud_run_options_defaults(source, "python")
         if name == "__init__.py":
             source = _add_result_wire_compatibility(source)
         path.write_text(source)

@@ -1587,6 +1587,68 @@ final stream = model.runStreaming(
 );
 ```
 
+### Shared FFI cloud fallback overrides
+
+Swift, Kotlin, Unity, Python and React Native can supply `cloudProvider`,
+`cloudModel` and `cloudGatewayUrl` on their per-run options (snake_case in Rust
+and Python). These are optional **overrides**, not implicit permission to use
+cloud inference: `fallbackToCloud` must be enabled for them to be applied.
+The facade does not read runtime/environment configuration to choose defaults.
+
+Explicit nonblank options override the matching envelope metadata. Omitted or
+blank fields preserve existing metadata; if all three are absent, the envelope
+is unchanged. Active overrides select the existing gateway backend. Gateway
+URLs are validated before any metadata is modified: a `/v1` base, no embedded
+credentials/query/fragment, and HTTPS on Xybrid hosts in release builds. Debug
+builds additionally accept the existing local-development gateway hosts.
+Invalid active overrides surface as `ConfigError`; disabled fallback ignores
+both the overrides and their validation. Cancellation, grace tokens and
+model-resolved generation defaults remain unchanged.
+
+Flutter resolves its historical `openai` / `gpt-4o-mini` defaults before calling
+the facade, and Dart still resolves the gateway from
+`XybridRuntimeConfig.gatewayUrl` unless a per-run gateway is supplied.
+Pipelines reject these per-model cloud overrides rather than silently dropping
+them. This option surface configures existing cloud execution; it does not add
+new fallback orchestration or change speculative-cloud opt-in behavior.
+
+```swift
+let options = XybridRunOptions(
+    generationConfig: nil, abortOn: [.thermalCritical],
+    fallbackToCloud: true, maxGraceTokens: 0, correlationId: nil,
+    cloudProvider: "openai", cloudModel: "gpt-4o-mini",
+    cloudGatewayUrl: "https://api.xybrid.dev/v1"
+)
+```
+
+```kotlin
+val options = XybridRunOptions(
+    generationConfig = null, abortOn = listOf(XybridAbortSignal.THERMAL_CRITICAL),
+    fallbackToCloud = true, maxGraceTokens = 0u, correlationId = null,
+    cloudProvider = "openai", cloudModel = "gpt-4o-mini",
+    cloudGatewayUrl = "https://api.xybrid.dev/v1",
+)
+```
+
+```csharp
+var options = new Xybrid.RunOptions {
+    FallbackToCloud = true,
+    AbortOn = new[] { Xybrid.AbortSignal.ThermalCritical },
+    CloudProvider = "openai", CloudModel = "gpt-4o-mini",
+    CloudGatewayUrl = "https://api.xybrid.dev/v1"
+};
+var result = model.Run(envelope, options: options);
+// The same options parameter is available on Run/RunStreaming with context.
+```
+
+The three fields are appended to the Bolt wire record; existing fields keep
+their order. Regenerated constructors default the new arguments to absent so
+existing source calls remain valid. **Ship generated bindings and native
+libraries together**: appending fields does not make mixed-version binaries
+wire compatible. Exhaustive Rust `RunOptions` literals need the new fields or
+`..Default::default()`; Unity's optional parameter preserves source calls, not
+previously compiled method references.
+
 ### RunOptions and AbortPolicy
 
 Per-run controls for cooperative cancellation and resource-driven local abort.
