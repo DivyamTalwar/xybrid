@@ -5,13 +5,35 @@ on:
 permissions:
   contents: read
 jobs:
-  baseline:
+  generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.publish.outputs.sha }}
     env:
       CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Apply checksummed patch to clean upstream base
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib
+          encoded = ''.join(p.read_text() for p in sorted(pathlib.Path('.github/issue-499').glob('*.b64')))
+          # Repair a duplicated four-character transport fragment; the full
+          # patch checksum below verifies the original reviewed bytes.
+          encoded = encoded.replace('CbF1hRT8hRT8hVb', 'CbF1hRT8hVb')
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'db76fd265f59a969dc99ccf7452c1ab946c6a8cd078bcda8729e723cca561754'
+          pathlib.Path('/tmp/issue499.patch').write_bytes(patch)
+          PY
+          git fetch --depth=1 origin 2900c7c309819f40fb2e7b75f4ad9473ee0fa732
+          git switch -c fix/499-shared-cloud-fallback-options 2900c7c309819f40fb2e7b75f4ad9473ee0fa732
+          git apply --check /tmp/issue499.patch
+          git apply /tmp/issue499.patch
+          git add -N crates bindings tools docs CHANGELOG.md
+          git diff --name-only > /tmp/allowed-paths
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: stable
@@ -20,13 +42,123 @@ jobs:
         with:
           shared-key: issue-499
           cache-on-failure: true
-      - uses: actions/cache@v4
-        id: bolt
-        with:
-          path: ~/.cargo/bin/boltffi
-          key: issue-499-boltffi-0.30.1-${{ runner.os }}
       - name: Install pinned binding generator
-        if: steps.bolt.outputs.cache-hit != 'true'
-        run: cargo install boltffi_cli --version 0.30.1 --locked
-      - name: Upstream facade and Bolt tests
-        run: cargo test -p xybrid-ffi-facade -p xybrid-bolt --lib
+        run: |
+          if ! boltffi --version 2>/dev/null | grep -q 0.30.1; then
+            cargo install boltffi_cli --version 0.30.1 --locked
+          fi
+      - name: Format touched Rust files
+        run: |
+          rustfmt --edition 2021 crates/xybrid-ffi-facade/src/lib.rs crates/xybrid-bolt/src/lib.rs bindings/flutter/rust/src/api/model.rs
+          python3 - <<'PY'
+          import pathlib, subprocess
+          allowed = set(pathlib.Path('/tmp/allowed-paths').read_text().splitlines())
+          for name in subprocess.check_output(['git','diff','--name-only']).decode().splitlines():
+              if name not in allowed:
+                  subprocess.run(['git','restore','--',name], check=True)
+          PY
+      - name: Facade and Bolt Rust tests
+        run: cargo test -p xybrid-ffi-facade -p xybrid_bolt --lib
+      - name: Regenerate all Bolt binding outputs
+        run: |
+          python3 tools/scripts/gen_kotlin_bolt.py
+          bash bindings/apple/scripts/gen-bolt-bindings.sh
+          python3 tools/scripts/gen_python_bolt.py
+          python3 tools/scripts/gen_unity_bolt_csharp.py
+      - name: Verify deterministic generation and tooling tests
+        run: |
+          python3 tools/scripts/gen_kotlin_bolt.py --check
+          bash bindings/apple/scripts/gen-bolt-bindings.sh --check
+          python3 tools/scripts/gen_python_bolt.py --check
+          python3 tools/scripts/gen_unity_bolt_csharp.py --check
+          python3 -m unittest discover -s tools/scripts/tests -p 'test_*.py'
+          cargo clippy -p xybrid-ffi-facade -p xybrid_bolt --lib --tests -- -D warnings
+      - name: Publish clean feature branch
+        id: publish
+        run: |
+          git diff --check
+          git add crates bindings tools docs CHANGELOG.md Cargo.lock
+          if git diff --cached --name-only | grep -q '^.github/'; then exit 1; fi
+          git config user.name 'Divyam Talwar'
+          git config user.email '194859478+DivyamTalwar@users.noreply.github.com'
+          git diff --cached --stat
+          git diff --cached --binary > /tmp/issue499-generated.patch
+          git commit -m 'feat(ffi): share caller-owned cloud fallback overrides across bindings'
+          git push origin HEAD:refs/heads/fix/499-shared-cloud-fallback-options
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Save working diff on failure
+        if: always()
+        run: |
+          git add -N crates bindings tools docs CHANGELOG.md || true
+          git diff --binary > /tmp/issue499-working.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue499-patches
+          path: /tmp/issue499-*.patch
+          retention-days: 7
+  managed:
+    needs: generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.generate.outputs.sha }}
+      - name: React Native TypeScript and parity tests
+        working-directory: bindings/react-native
+        run: |
+          npm ci --ignore-scripts
+          npm test
+      - name: Kotlin native codec tests
+        run: bash bindings/react-native/scripts/test-android.sh
+      - name: Unity C sharp 9 compilation
+        run: dotnet build tools/unity-bolt-compile-check/UnityBoltCompileCheck.csproj -c Release
+      - name: Unity option and wire tests
+        run: |
+          mkdir -p /tmp/issue499-unity
+          cat > /tmp/issue499-unity/Tests.csproj <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>9</LangVersion><AllowUnsafeBlocks>true</AllowUnsafeBlocks><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="NUnitLite" Version="3.14.0" />
+              <Compile Include="$GITHUB_WORKSPACE/bindings/unity/Runtime/Bolt/*.cs" />
+              <Compile Include="$GITHUB_WORKSPACE/bindings/unity/Runtime/BoltSupplement/*.cs" />
+              <Compile Include="$GITHUB_WORKSPACE/bindings/unity/Runtime/Api/*.cs" />
+              <Compile Include="$GITHUB_WORKSPACE/bindings/unity/Tests/Editor/RunOptionsTests.cs" />
+              <Compile Include="Program.cs" />
+            </ItemGroup>
+          </Project>
+          EOF
+          echo 'public static class Program { public static int Main(string[] args) => new NUnitLite.AutoRun().Execute(args); }' > /tmp/issue499-unity/Program.cs
+          dotnet run --project /tmp/issue499-unity/Tests.csproj -- --workers=0
+  apple:
+    needs: generate
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.generate.outputs.sha }}
+      - name: Swift SDK and iOS shim typecheck plus codec tests
+        run: bash bindings/react-native/scripts/test-ios.sh
+  flutter-rust:
+    needs: generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.generate.outputs.sha }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: issue-499
+          cache-on-failure: true
+      - name: Flutter Rust binding regressions
+        run: cargo test -p xybrid_flutter --lib
