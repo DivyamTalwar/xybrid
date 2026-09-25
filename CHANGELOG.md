@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cloud fallback destinations are shared across bindings.** Swift, Kotlin,
+  Unity, Python, and React Native can pass an optional provider, model, and
+  gateway URL through the common FFI options record. The facade validates and
+  lowers supplied values, while Flutter keeps its existing caller defaults.
+  Supplying a destination does not enable cloud fallback.
+
 - **React Native catches up with the other SDKs, and runs on iOS.** The iOS
   half of `react-native-xybrid` never compiled against the SDK it bundles, and
   its method selectors did not match the ones React Native's code generator
